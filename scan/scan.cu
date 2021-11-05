@@ -76,11 +76,11 @@ void exclusive_scan(int* input, int N, int* result)
     cudaMemcpy(result, input, N * sizeof(int), cudaMemcpyDeviceToDevice);
 
     // Up Sweep phase
-    const int rounded_length = nextPow2(N);
+    int rounded_length = nextPow2(N);
     for (int two_d = 1; two_d <= rounded_length / 2; two_d <<= 1) {
         int two_dplus1 = (two_d << 1);
         int threads_per_block {std::min(rounded_length / two_dplus1, THREADS_PER_BLOCK)};
-        const int num_blocks {(rounded_length / two_dplus1 + threads_per_block - 1) / threads_per_block};
+        int num_blocks {(rounded_length / two_dplus1 + threads_per_block - 1) / threads_per_block};
         // dispatch to CUDA
         upsweep_kernel<<<num_blocks, threads_per_block>>>(two_d, two_dplus1, result, result, rounded_length);
         cudaDeviceSynchronize();
@@ -90,7 +90,7 @@ void exclusive_scan(int* input, int N, int* result)
     for (int two_d = rounded_length / 2; two_d >= 1; two_d >>= 1) {
         int two_dplus1 = (two_d << 1);
         int threads_per_block {std::min(rounded_length / two_dplus1, THREADS_PER_BLOCK)};
-        const int num_blocks {(rounded_length / two_dplus1 + threads_per_block - 1) / threads_per_block};
+        int num_blocks {(rounded_length / two_dplus1 + threads_per_block - 1) / threads_per_block};
         // dispatch to CUDA
         downsweep_kernel<<<num_blocks, threads_per_block>>>(two_d, two_dplus1, result, result, rounded_length);
         cudaDeviceSynchronize();
@@ -188,6 +188,27 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
 // indices `i` for which `device_input[i] == device_input[i+1]`.
 //
 // Returns the total number of pairs found
+
+__global__ void repetition_kernel(int* input, int* indicator, const int N) {
+    unsigned int idx {blockIdx.x * blockDim.x + threadIdx.x};
+    if (idx < N - 1 && input[idx] == input[idx + 1]) {
+        indicator[idx] = 1;
+    } else {
+        indicator[idx] = 0;
+    }
+}
+
+__global__ void gather_kernel(int* exclusive_scan_results, int* output, const int N, int* total_count) {
+    unsigned int idx {blockIdx.x * blockDim.x + threadIdx.x};
+    if (idx < N - 1) {
+        if (exclusive_scan_results[idx] != exclusive_scan_results[idx + 1]) {
+            output[exclusive_scan_results[idx]] = idx;
+        }
+    } else if (idx == N - 1) {
+        *total_count = exclusive_scan_results[N - 1];
+    }
+}
+
 int find_repeats(int* device_input, int length, int* device_output) {
 
     // CS149 TODO:
@@ -201,8 +222,34 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // exclusive_scan function with them. However, your implementation
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
+    const int rounded_length {nextPow2(length)};
 
-    return 0; 
+    // construct indicator array, whether input[i] == input[i + 1]
+    int* device_indicator;
+    cudaMalloc(&device_indicator, rounded_length * sizeof(int));
+    int threads_per_block {std::min(rounded_length, THREADS_PER_BLOCK)};
+    int num_blocks {(rounded_length + THREADS_PER_BLOCK - 1) / threads_per_block};
+    repetition_kernel<<<num_blocks, threads_per_block>>>(device_input, device_indicator, length);
+
+    // exclusive scan on indicator array
+    // to get device_exclusive_scan_results
+    int* device_exclusive_scan_results;
+    cudaMalloc(&device_exclusive_scan_results, rounded_length * sizeof(int));
+    exclusive_scan(device_indicator, length, device_exclusive_scan_results);
+    cudaFree(device_indicator);
+
+    // get repetition points in array    
+    int* device_repetition_count;
+    cudaMalloc(&device_repetition_count, sizeof(int));
+    gather_kernel<<<num_blocks, threads_per_block>>>(device_exclusive_scan_results, device_output, length, device_repetition_count);
+    cudaFree(device_exclusive_scan_results);
+
+    // return results
+    int output_length;
+    cudaMemcpy(&output_length, device_repetition_count, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaFree(device_repetition_count);
+    
+    return output_length; 
 }
 
 
