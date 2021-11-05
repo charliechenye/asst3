@@ -144,7 +144,9 @@ double cudaScan(int* inarray, int* end, int* resultarray)
     cudaMemcpy(resultarray, device_result, (end - inarray) * sizeof(int), cudaMemcpyDeviceToHost);
 
     double overallDuration = endTime - startTime;
-
+    cudaFree(device_result);
+    cudaFree(device_input);
+    
     return overallDuration; 
 }
 
