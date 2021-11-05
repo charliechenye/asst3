@@ -75,6 +75,9 @@ void saxpyCuda(int N, float alpha, float* xarray, float* yarray, float* resultar
     //
     // https://devblogs.nvidia.com/easy-introduction-cuda-c-and-c/
     //
+    cudaMalloc(&device_x, N * sizeof(float));
+    cudaMalloc(&device_y, N * sizeof(float));
+    cudaMalloc(&device_result, N * sizeof(float));
         
     // start timing after allocation of device memory
     double startTime = CycleTimer::currentSeconds();
@@ -82,7 +85,9 @@ void saxpyCuda(int N, float alpha, float* xarray, float* yarray, float* resultar
     //
     // CS149 TODO: copy input arrays to the GPU using cudaMemcpy
     //
-
+    cudaMemcpy(device_x, xarray, N * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(device_y, yarray, N * sizeof(float), cudaMemcpyHostToDevice);
+    double executionStartTime = CycleTimer::currentSeconds();
    
     // run CUDA kernel. (notice the <<< >>> brackets indicating a CUDA
     // kernel launch) Execution on the GPU occurs here.
@@ -91,6 +96,9 @@ void saxpyCuda(int N, float alpha, float* xarray, float* yarray, float* resultar
     //
     // CS149 TODO: copy result from GPU back to CPU using cudaMemcpy
     //
+    cudaDeviceSynchronize();
+    double executionEndTime = CycleTimer::currentSeconds();
+    cudaMemcpy(resultarray, device_result, N * sizeof(float), cudaMemcpyDeviceToHost);
 
     
     // end timing after result has been copied back into host memory
@@ -103,12 +111,16 @@ void saxpyCuda(int N, float alpha, float* xarray, float* yarray, float* resultar
     }
 
     double overallDuration = endTime - startTime;
+    double executionDuration = executionEndTime - executionStartTime;
+    printf("Execution time: %.3f ms\n", 1000.f * executionDuration);
     printf("Effective BW by CUDA saxpy: %.3f ms\t\t[%.3f GB/s]\n", 1000.f * overallDuration, GBPerSec(totalBytes, overallDuration));
 
     //
     // CS149 TODO: free memory buffers on the GPU using cudaFree
     //
-    
+    cudaFree(device_x);
+    cudaFree(device_y);
+    cudaFree(device_result);
 }
 
 void printCudaInfo() {
