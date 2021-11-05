@@ -42,6 +42,24 @@ static inline int nextPow2(int n) {
 // Also, as per the comments in cudaScan(), you can implement an
 // "in-place" scan, since the timing harness makes a copy of input and
 // places it in result
+__global__ void upsweep_kernel(const int two_d, const int two_dplus1, int* input, int* output, const int N){
+    unsigned int idx {blockIdx.x * blockDim.x + threadIdx.x};
+    unsigned int k {two_dplus1 * idx};
+    if (k < N){
+        output[k + two_dplus1 - 1] = input[k + two_d - 1] + output[k + two_dplus1 - 1];
+    }
+}
+
+__global__ void downsweep_kernel(const int two_d, const int two_dplus1, int* input, int* output, const int N){
+    unsigned int idx {blockIdx.x * blockDim.x + threadIdx.x};
+    unsigned int k {two_dplus1 * idx};
+    if (k < N) {
+        int tmp {input[k + two_d - 1]};
+        output[k + two_d - 1] = input[k + two_dplus1 - 1];
+        output[k + two_dplus1 - 1] = tmp + input[k + two_dplus1 - 1];
+    }
+}
+
 void exclusive_scan(int* input, int N, int* result)
 {
 
@@ -53,8 +71,30 @@ void exclusive_scan(int* input, int N, int* result)
     // on the CPU.  Your implementation will need to make multiple calls
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
+    
+    // input and result are on device
+    cudaMemcpy(result, input, N * sizeof(int), cudaMemcpyDeviceToDevice);
 
-
+    // Up Sweep phase
+    const int rounded_length = nextPow2(N);
+    for (int two_d = 1; two_d <= rounded_length / 2; two_d <<= 1) {
+        int two_dplus1 = (two_d << 1);
+        int threads_per_block {std::min(rounded_length / two_dplus1, THREADS_PER_BLOCK)};
+        const int num_blocks {(rounded_length / two_dplus1 + threads_per_block - 1) / threads_per_block};
+        // dispatch to CUDA
+        upsweep_kernel<<<num_blocks, threads_per_block>>>(two_d, two_dplus1, result, result, rounded_length);
+        cudaDeviceSynchronize();
+    }
+    //Down Sweep pahse
+    cudaMemset(&result[rounded_length - 1], 0, sizeof(int));
+    for (int two_d = rounded_length / 2; two_d >= 1; two_d >>= 1) {
+        int two_dplus1 = (two_d << 1);
+        int threads_per_block {std::min(rounded_length / two_dplus1, THREADS_PER_BLOCK)};
+        const int num_blocks {(rounded_length / two_dplus1 + threads_per_block - 1) / threads_per_block};
+        // dispatch to CUDA
+        downsweep_kernel<<<num_blocks, threads_per_block>>>(two_d, two_dplus1, result, result, rounded_length);
+        cudaDeviceSynchronize();
+    }
 }
 
 
@@ -104,6 +144,7 @@ double cudaScan(int* inarray, int* end, int* resultarray)
     cudaMemcpy(resultarray, device_result, (end - inarray) * sizeof(int), cudaMemcpyDeviceToHost);
 
     double overallDuration = endTime - startTime;
+
     return overallDuration; 
 }
 
