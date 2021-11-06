@@ -727,11 +727,18 @@ CudaRenderer::advanceAnimation() {
 
 void
 CudaRenderer::render() {
-
+    /* Parallel over circles
     // 256 threads per block is a healthy number
     dim3 blockDim(256, 1);
     dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
 
+    kernelRenderCircles<<<gridDim, blockDim>>>();
+    cudaDeviceSynchronize();
+    */
+    // parallel over pixels
+    dim3 blockDim(16, 16);      // blockDim.x*blockDim.y must equal to SCAN_BLOCK_DIM
+    dim3 gridDim((params.imageWidth + blockDim.x - 1) / blockDim.x, 
+                (params.imageHeight + blockDim.y - 1) / blockDim.y);
     kernelRenderCircles<<<gridDim, blockDim>>>();
     cudaDeviceSynchronize();
 }

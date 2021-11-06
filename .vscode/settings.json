@@ -4,6 +4,7 @@
         "xlocale": "cpp",
         "xstring": "cpp",
         "*.cu_inl": "cpp",
-        "cmath": "cpp"
+        "cmath": "cpp",
+        "xiosbase": "cpp"
     }
 }
