@@ -453,10 +453,10 @@ __global__ void kernelRenderPixel() {
                 intersect_radius[circle_intersects_block[circle_index]] = circle_rad;
                 intersect_p[circle_intersects_block[circle_index]] = *(float3*)(&cuConstRendererParams.position[3 * circle_index]);
             } else if (thread_id == SCAN_BLOCK_DIM - 1 && last_circle_intersect) {
-                relevant_circle_indices[circle_intersects_block[-1]] = circle_index;
+                relevant_circle_indices[circle_intersects_block[SCAN_BLOCK_DIM - 1]] = circle_index;
                 atomicAdd(&intersect_circle_count, 1);
-                intersect_radius[circle_intersects_block[-1]] = circle_rad;
-                intersect_p[circle_intersects_block[-1]] = *(float3*)(&cuConstRendererParams.position[3 * circle_index]);
+                intersect_radius[circle_intersects_block[SCAN_BLOCK_DIM - 1]] = circle_rad;
+                intersect_p[circle_intersects_block[SCAN_BLOCK_DIM - 1]] = *(float3*)(&cuConstRendererParams.position[3 * circle_index]);
             }
         }
         __syncthreads();
