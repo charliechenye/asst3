@@ -17,6 +17,8 @@
 ////////////////////////////////////////////////////////////////////////////////////////
 // Putting all the cuda kernels here
 ///////////////////////////////////////////////////////////////////////////////////////
+
+// max number that's power of 2 and smaller than (49152/sizeof(int)-sizeof(int))/4
 #define SCAN_BLOCK_DIM 512
 
 struct GlobalConstants {
@@ -380,95 +382,95 @@ shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr, floa
     // END SHOULD-BE-ATOMIC REGION
 }
 
+__global__ void kernelRenderPixelBlock(){
+    // total number of circles in the picture
+    uint num_circles = cuConstRendererParams.numCircles;
 
-__global__ void kernelRenderPixel() {
-    // number of threads per block
-    uint thread_id {threadIdx.y * blockDim.x + threadIdx.x}; 
+    // global variable about image
+    int img_width = cuConstRendererParams.imageWidth;
+    int img_height = cuConstRendererParams.imageHeight;
+    float inv_width = 1.f / img_width;
+    float inv_height = 1.f / img_height;
 
-    // global parameters on images
-    int image_height = cuConstRendererParams.imageHeight;
-    int image_width = cuConstRendererParams.imageWidth;
-    float inv_height = 1.f / image_height;
-    float inv_width = 1.f / image_width;
-
-    // process current pixel in the image
+    // thread information
+    uint thread_id {threadIdx.y*blockDim.x+threadIdx.x};
     uint pixel_index_x {blockIdx.x * blockDim.x + threadIdx.x};
     uint pixel_index_y {blockIdx.y * blockDim.y + threadIdx.y};
 
-    float4* pixelPtrGlobal = (float4*)(&cuConstRendererParams.imageData[4 * (pixel_index_y * image_width + pixel_index_x)]);
-    float4 pixelPtrLocalCopy {*pixelPtrGlobal};
+    // assigned pixel information
+    float4* imgPtrGlobal = (float4*)(&cuConstRendererParams.imageData[4 * (pixel_index_y * img_width + pixel_index_x)]);
+    float4 imgPtrLocal{*imgPtrGlobal};
     float2 pixelCenterNorm {make_float2(inv_width * (static_cast<float>(pixel_index_x) + 0.5f),
                                         inv_height * (static_cast<float>(pixel_index_y) + 0.5f))};
+    
+    // bouding box for the whole block
+    float box_l {min(1.f, inv_width * (static_cast<float>(blockIdx.x * blockDim.x)))};
+    float box_r {min(1.f, inv_width * (static_cast<float>((blockIdx.x + 1) * blockDim.x) + 1.f))};
+    float box_b {min(1.f, inv_height * (static_cast<float>(blockIdx.y * blockDim.y)))};
+    float box_t {min(1.f, inv_height * (static_cast<float>((blockIdx.y + 1) * blockDim.y) + 1.f))};
 
-    // bouding box covering all threads in current block
-    // rather coarse bounding box
-    float block_l {fmin(inv_width * (static_cast<float>(blockIdx.x * blockDim.x)), 1.f)};
-    float block_r {fmin(inv_width * (static_cast<float>((blockIdx.x + 1) * blockDim.x) + 1.f), 1.f)};
-    float block_b {fmin(inv_height * (static_cast<float>(blockIdx.y * blockDim.y)), 1.f)};
-    float block_t {fmin(inv_height * (static_cast<float>((blockIdx.y + 1) * blockDim.y) + 1.f), 1.f)};
+    __shared__ uint relevant_circle_count;
+    __shared__ uint circle_intersects_block[SCAN_BLOCK_DIM];
+    __shared__ float circle_intersects_radius[SCAN_BLOCK_DIM];
+    __shared__ float3 circle_intersects_p[SCAN_BLOCK_DIM];
 
-    __shared__ uint circle_intersects_block[SCAN_BLOCK_DIM];    // whether each circle intersect with the block
-    __shared__ float intersect_radius[SCAN_BLOCK_DIM];    // radius of the circle 
-    __shared__ float3 intersect_p[SCAN_BLOCK_DIM];      // position of the cricle
-    __shared__ uint intersect_circle_count;     // count of circle intersection
-    __shared__ uint prefixSumScratch[2 * SCAN_BLOCK_DIM];   // for exclusive scan
+    __shared__ uint prefixSumScratch[2 * SCAN_BLOCK_DIM]; // scratch space for sharedMemExclusiveScan
+    uint * relevant_circle_indices = prefixSumScratch; // use the same memory to spell out all relevant circles for render
 
-    uint total_num_circles = cuConstRendererParams.numCircles;
-    uint* relevant_circle_indices = prefixSumScratch;   // alias pointing to shared memory address
-    float circle_rad {0.f};
-    for (int starting_circle_index = 0; starting_circle_index < total_num_circles; starting_circle_index += SCAN_BLOCK_DIM) {
-        // process current batch of circles to see if they intersects with the block
-        int circle_index = starting_circle_index + thread_id;
-        bool last_circle_intersect = false;     // keep track of intersection in last lane
-        if (circle_index < total_num_circles && thread_id < SCAN_BLOCK_DIM - 1) {
-            float3 circle_center = *(float3*)(&cuConstRendererParams.position[circle_index * 3]);
+    float3 circle_center;
+    float circle_rad;
+    for (uint starting_circle_index = 0; starting_circle_index < num_circles; starting_circle_index += SCAN_BLOCK_DIM) {
+        // Go through circles SCAN_BLOCK_DIM at a time
+        // and render them on to current pixel block
+
+        // Step 1: Go through SCAN_BLOCK_DIM circles and check whether they intersect with block
+        uint circle_index {starting_circle_index + thread_id};
+        bool last_lane_intersect {false};
+        if (circle_index < num_circles) {
+            int circle_index3 = 3 * circle_index;
+            circle_center = *(float3*)(&cuConstRendererParams.position[circle_index3]);
             circle_rad = cuConstRendererParams.radius[circle_index];
-            circle_intersects_block[thread_id] = circleInBoxConservative(circle_center.x, circle_center.y, circle_rad, block_l, block_r, block_t, block_b);
+            circle_intersects_block[thread_id] = circleInBoxConservative(circle_center.x, circle_center.y, circle_rad, box_l, box_r, box_t, box_b);
+            if (thread_id == SCAN_BLOCK_DIM - 1) {
+                last_lane_intersect = (circle_intersects_block[thread_id] == 1);
+            }
         } else {
             circle_intersects_block[thread_id] = 0;
         }
-        if (thread_id == SCAN_BLOCK_DIM - 1) {
-            if (circle_index < total_num_circles) {
-                float3 circle_center = *(float3*)(&cuConstRendererParams.position[circle_index * 3]);
-                circle_rad = cuConstRendererParams.radius[circle_index];
-                last_circle_intersect = (circleInBoxConservative(circle_center.x, circle_center.y, circle_rad, block_l, block_r, block_t, block_b) == 1);
-            } else {
-                last_circle_intersect = false;
-            }
-        }
-        if (thread_id == 0) {
-            intersect_circle_count = 0;
+        
+        if (thread_id == 0){
+            relevant_circle_count = 0;
         }
         __syncthreads();
 
-        // exclusive scan to mark out intersections
-        sharedMemExclusiveScan(thread_id, circle_intersects_block, circle_intersects_block, prefixSumScratch, SCAN_BLOCK_DIM);
+        // Step 2: Use exclusive scan sub routine to generate all relevant circles
+        sharedMemExclusiveScan(thread_id, circle_intersects_block, circle_intersects_block, prefixSumScratch, 
+                                SCAN_BLOCK_DIM);
         __syncthreads();
 
-        // collect circles that intersects with the block
-        if (circle_index < total_num_circles) {
-            if (thread_id < SCAN_BLOCK_DIM - 1 && circle_intersects_block[circle_index] != circle_intersects_block[circle_index + 1]) {
-                relevant_circle_indices[circle_intersects_block[circle_index]] = circle_index;
-                atomicAdd(&intersect_circle_count, 1);
-                intersect_radius[circle_intersects_block[circle_index]] = circle_rad;
-                intersect_p[circle_intersects_block[circle_index]] = *(float3*)(&cuConstRendererParams.position[3 * circle_index]);
-            } else if (thread_id == SCAN_BLOCK_DIM - 1 && last_circle_intersect) {
-                relevant_circle_indices[circle_intersects_block[SCAN_BLOCK_DIM - 1]] = circle_index;
-                atomicAdd(&intersect_circle_count, 1);
-                intersect_radius[circle_intersects_block[SCAN_BLOCK_DIM - 1]] = circle_rad;
-                intersect_p[circle_intersects_block[SCAN_BLOCK_DIM - 1]] = *(float3*)(&cuConstRendererParams.position[3 * circle_index]);
-            }
+        // Step 3: Collect the circle from the grid and write to relevant_circle_indices
+        if (last_lane_intersect || 
+            (thread_id < SCAN_BLOCK_DIM - 1 && circle_intersects_block[thread_id] != circle_intersects_block[thread_id + 1])) {
+            // this is a relevant circle
+            int circle_i = circle_intersects_block[thread_id];
+            // keep track of # of relevant circle
+            atomicAdd(&relevant_circle_count, 1);
+            relevant_circle_indices[circle_i] = circle_index;
+            circle_intersects_radius[circle_i] = circle_rad;
+            circle_intersects_p[circle_i] =  circle_center;
         }
         __syncthreads();
 
-        // render all the circle onto current pixel
-        for (int i = 0; i < intersect_circle_count; i ++) {
-            shadePixel(relevant_circle_indices[i], pixelCenterNorm, intersect_p[i], &pixelPtrLocalCopy, intersect_radius[i]);
+        // Step 4: Shade the pixel with circles in relevant_circle_indices
+        for (int circle_i = 0; circle_i < relevant_circle_count; circle_i ++) {
+            shadePixel(relevant_circle_indices[circle_i], pixelCenterNorm, 
+                        circle_intersects_p[circle_i], &imgPtrLocal, circle_intersects_radius[circle_i]);
         }
         __syncthreads();
     }
-    // write back to global
-    *pixelPtrGlobal = pixelPtrLocalCopy;
+    
+    // write back to global memory
+    *imgPtrGlobal = imgPtrLocal;
 }
 
 // kernelRenderCircles -- (CUDA device code)
@@ -597,7 +599,6 @@ CudaRenderer::setup() {
         cudaDeviceProp deviceProps;
         cudaGetDeviceProperties(&deviceProps, i);
         name = deviceProps.name;
-
         printf("Device %d: %s\n", i, deviceProps.name);
         printf("   SMs:        %d\n", deviceProps.multiProcessorCount);
         printf("   Global mem: %.0f MB\n", static_cast<float>(deviceProps.totalGlobalMem) / (1024 * 1024));
@@ -727,24 +728,12 @@ CudaRenderer::advanceAnimation() {
 
 void
 CudaRenderer::render() {
-    /* Parallel over circles
-    // 256 threads per block is a healthy number
-    dim3 blockDim(256, 1);
-    dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
-
-    kernelRenderCircles<<<gridDim, blockDim>>>();
-    cudaDeviceSynchronize();
-    */
-    // parallel over pixels
-    dim3 blockDim(16, 16);      // blockDim.x*blockDim.y must equal to SCAN_BLOCK_DIM
-    dim3 gridDim((image->width + blockDim.x - 1) / blockDim.x, 
+    // Break the image into blocks of pixels
+    // Process the blocks 
+    uint block_x = 16;
+    dim3 blockDim(block_x, SCAN_BLOCK_DIM / block_x); // blockDim.x*blockDim.y must equal to SCAN_BLOCK_DIM
+    dim3 gridDim((image->width + blockDim.x - 1) / blockDim.x,
                 (image->height + blockDim.y - 1) / blockDim.y);
-    kernelRenderCircles<<<gridDim, blockDim>>>();
+    kernelRenderPixelBlock<<<gridDim, blockDim>>>();
     cudaDeviceSynchronize();
-
-    cudaError_t errCode = cudaPeekAtLastError();
-    if (errCode != cudaSuccess) {
-        fprintf(stderr, "WARNING: A CUDA error occured: code=%d, %s\n",
-		errCode, cudaGetErrorString(errCode));
-    }
 }
