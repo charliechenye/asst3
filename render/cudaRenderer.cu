@@ -741,4 +741,10 @@ CudaRenderer::render() {
                 (image->height + blockDim.y - 1) / blockDim.y);
     kernelRenderCircles<<<gridDim, blockDim>>>();
     cudaDeviceSynchronize();
+
+    cudaError_t errCode = cudaPeekAtLastError();
+    if (errCode != cudaSuccess) {
+        fprintf(stderr, "WARNING: A CUDA error occured: code=%d, %s\n",
+		errCode, cudaGetErrorString(errCode));
+    }
 }
