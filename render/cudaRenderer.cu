@@ -737,8 +737,8 @@ CudaRenderer::render() {
     */
     // parallel over pixels
     dim3 blockDim(16, 16);      // blockDim.x*blockDim.y must equal to SCAN_BLOCK_DIM
-    dim3 gridDim((cuConstRendererParams.imageWidth + blockDim.x - 1) / blockDim.x, 
-                (cuConstRendererParams.imageHeight + blockDim.y - 1) / blockDim.y);
+    dim3 gridDim((image->width + blockDim.x - 1) / blockDim.x, 
+                (image->height + blockDim.y - 1) / blockDim.y);
     kernelRenderCircles<<<gridDim, blockDim>>>();
     cudaDeviceSynchronize();
 }
