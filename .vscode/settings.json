@@ -2,6 +2,8 @@
     "files.associations": {
         "iosfwd": "cpp",
         "xlocale": "cpp",
-        "xstring": "cpp"
+        "xstring": "cpp",
+        "*.cu_inl": "cpp",
+        "cmath": "cpp"
     }
 }
