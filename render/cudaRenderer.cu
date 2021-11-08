@@ -399,15 +399,16 @@ __global__ void kernelRenderPixelBlock(){
 
     // assigned pixel information
     float4* imgPtrGlobal = (float4*)(&cuConstRendererParams.imageData[4 * (pixel_index_y * img_width + pixel_index_x)]);
-    float4 imgPtrLocal{*imgPtrGlobal};
+    // local copy to reduce number of global memory access
+    float4 imgPtrLocal {*imgPtrGlobal};
     float2 pixelCenterNorm {make_float2(inv_width * (static_cast<float>(pixel_index_x) + 0.5f),
                                         inv_height * (static_cast<float>(pixel_index_y) + 0.5f))};
     
     // bouding box for the whole block
-    float box_l {min(1.f, inv_width * (static_cast<float>(blockIdx.x * blockDim.x)))};
-    float box_r {min(1.f, inv_width * (static_cast<float>((blockIdx.x + 1) * blockDim.x) + 1.f))};
-    float box_b {min(1.f, inv_height * (static_cast<float>(blockIdx.y * blockDim.y)))};
-    float box_t {min(1.f, inv_height * (static_cast<float>((blockIdx.y + 1) * blockDim.y) + 1.f))};
+    float box_l {fminf(1.f, inv_width * (static_cast<float>(blockIdx.x * blockDim.x)))};
+    float box_r {fminf(1.f, inv_width * (static_cast<float>((blockIdx.x + 1) * blockDim.x) + 1.f))};
+    float box_b {fminf(1.f, inv_height * (static_cast<float>(blockIdx.y * blockDim.y)))};
+    float box_t {fminf(1.f, inv_height * (static_cast<float>((blockIdx.y + 1) * blockDim.y) + 1.f))};
 
     __shared__ uint relevant_circle_count;
     __shared__ uint circle_intersects_block[SCAN_BLOCK_DIM];
@@ -419,16 +420,16 @@ __global__ void kernelRenderPixelBlock(){
 
     float3 circle_center;
     float circle_rad;
+    uint circle_index;
     for (uint starting_circle_index = 0; starting_circle_index < num_circles; starting_circle_index += SCAN_BLOCK_DIM) {
         // Go through circles SCAN_BLOCK_DIM at a time
         // and render them on to current pixel block
 
         // Step 1: Go through SCAN_BLOCK_DIM circles and check whether they intersect with block
-        uint circle_index {starting_circle_index + thread_id};
+        circle_index = starting_circle_index + thread_id;
         bool last_lane_intersect {false};
         if (circle_index < num_circles) {
-            int circle_index3 = 3 * circle_index;
-            circle_center = *(float3*)(&cuConstRendererParams.position[circle_index3]);
+            circle_center = *(float3*)(&cuConstRendererParams.position[3 * circle_index]);
             circle_rad = cuConstRendererParams.radius[circle_index];
             circle_intersects_block[thread_id] = circleInBoxConservative(circle_center.x, circle_center.y, circle_rad, box_l, box_r, box_t, box_b);
             if (thread_id == SCAN_BLOCK_DIM - 1) {
