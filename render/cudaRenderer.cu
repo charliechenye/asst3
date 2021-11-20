@@ -384,7 +384,7 @@ shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr, floa
 
 __global__ void kernelRenderPixelBlock(){
     // total number of circles in the picture
-    uint num_circles = cuConstRendererParams.numCircles;
+    int num_circles = cuConstRendererParams.numCircles;
 
     // global variable about image
     int img_width = cuConstRendererParams.imageWidth;
@@ -393,9 +393,9 @@ __global__ void kernelRenderPixelBlock(){
     float inv_height = 1.f / img_height;
 
     // thread information
-    uint thread_id {threadIdx.y * blockDim.x + threadIdx.x};
-    uint pixel_index_x {blockIdx.x * blockDim.x + threadIdx.x};
-    uint pixel_index_y {blockIdx.y * blockDim.y + threadIdx.y};
+    int thread_id {threadIdx.y * blockDim.x + threadIdx.x};
+    int pixel_index_x {blockIdx.x * blockDim.x + threadIdx.x};
+    int pixel_index_y {blockIdx.y * blockDim.y + threadIdx.y};
 
     // assigned pixel information
     float4* imgPtrGlobal = (float4*)(&cuConstRendererParams.imageData[4 * (pixel_index_y * img_width + pixel_index_x)]);
@@ -410,18 +410,18 @@ __global__ void kernelRenderPixelBlock(){
     float box_b {fminf(1.f, inv_height * (static_cast<float>(blockIdx.y * blockDim.y)))};
     float box_t {fminf(1.f, inv_height * (static_cast<float>((blockIdx.y + 1) * blockDim.y) + 1.f))};
 
-    __shared__ uint relevant_circle_count;
-    __shared__ uint circle_intersects_block[SCAN_BLOCK_DIM];
+    __shared__ int relevant_circle_count;
+    __shared__ int circle_intersects_block[SCAN_BLOCK_DIM];
     __shared__ float circle_intersects_radius[SCAN_BLOCK_DIM];
     __shared__ float3 circle_intersects_p[SCAN_BLOCK_DIM];
 
-    __shared__ uint prefix_sum_scratch[2 * SCAN_BLOCK_DIM]; // scratch space for sharedMemExclusiveScan
-    uint * relevant_circle_indices = prefix_sum_scratch; // use the same memory to spell out all relevant circles for render
+    __shared__ int prefix_sum_scratch[2 * SCAN_BLOCK_DIM]; // scratch space for sharedMemExclusiveScan
+    int * relevant_circle_indices = prefix_sum_scratch; // use the same memory to spell out all relevant circles for render
 
     float3 circle_center;
     float circle_rad;
-    uint circle_index;
-    for (uint starting_circle_index = 0; starting_circle_index < num_circles; starting_circle_index += SCAN_BLOCK_DIM) {
+    int circle_index;
+    for (int starting_circle_index = 0; starting_circle_index < num_circles; starting_circle_index += SCAN_BLOCK_DIM) {
         // Go through circles SCAN_BLOCK_DIM at a time
         // and render them on to current pixel block
 
@@ -731,7 +731,7 @@ void
 CudaRenderer::render() {
     // Break the image into blocks of pixels
     // Process the blocks 
-    uint block_x = 16;
+    int block_x = 16;
     dim3 blockDim(block_x, SCAN_BLOCK_DIM / block_x); // blockDim.x*blockDim.y must equal to SCAN_BLOCK_DIM
     dim3 gridDim((image->width + blockDim.x - 1) / blockDim.x,
                 (image->height + blockDim.y - 1) / blockDim.y);
