@@ -393,7 +393,7 @@ __global__ void kernelRenderPixelBlock(){
     float inv_height = 1.f / img_height;
 
     // thread information
-    uint thread_id {threadIdx.y*blockDim.x+threadIdx.x};
+    uint thread_id {threadIdx.y * blockDim.x + threadIdx.x};
     uint pixel_index_x {blockIdx.x * blockDim.x + threadIdx.x};
     uint pixel_index_y {blockIdx.y * blockDim.y + threadIdx.y};
 
@@ -401,8 +401,8 @@ __global__ void kernelRenderPixelBlock(){
     float4* imgPtrGlobal = (float4*)(&cuConstRendererParams.imageData[4 * (pixel_index_y * img_width + pixel_index_x)]);
     // local copy to reduce number of global memory access
     float4 imgPtrLocal {*imgPtrGlobal};
-    float2 pixelCenterNorm {make_float2(inv_width * (static_cast<float>(pixel_index_x) + 0.5f),
-                                        inv_height * (static_cast<float>(pixel_index_y) + 0.5f))};
+    float2 pixel_center_norm {make_float2(inv_width * (static_cast<float>(pixel_index_x) + 0.5f),
+                                            inv_height * (static_cast<float>(pixel_index_y) + 0.5f))};
     
     // bouding box for the whole block
     float box_l {fminf(1.f, inv_width * (static_cast<float>(blockIdx.x * blockDim.x)))};
@@ -415,8 +415,8 @@ __global__ void kernelRenderPixelBlock(){
     __shared__ float circle_intersects_radius[SCAN_BLOCK_DIM];
     __shared__ float3 circle_intersects_p[SCAN_BLOCK_DIM];
 
-    __shared__ uint prefixSumScratch[2 * SCAN_BLOCK_DIM]; // scratch space for sharedMemExclusiveScan
-    uint * relevant_circle_indices = prefixSumScratch; // use the same memory to spell out all relevant circles for render
+    __shared__ uint prefix_sum_scratch[2 * SCAN_BLOCK_DIM]; // scratch space for sharedMemExclusiveScan
+    uint * relevant_circle_indices = prefix_sum_scratch; // use the same memory to spell out all relevant circles for render
 
     float3 circle_center;
     float circle_rad;
@@ -439,13 +439,13 @@ __global__ void kernelRenderPixelBlock(){
             circle_intersects_block[thread_id] = 0;
         }
         
-        if (thread_id == 0){
+        if (thread_id == 0) {
             relevant_circle_count = 0;
         }
         __syncthreads();
 
         // Step 2: Use exclusive scan sub routine to generate all relevant circles
-        sharedMemExclusiveScan(thread_id, circle_intersects_block, circle_intersects_block, prefixSumScratch, 
+        sharedMemExclusiveScan(thread_id, circle_intersects_block, circle_intersects_block, prefix_sum_scratch, 
                                 SCAN_BLOCK_DIM);
         __syncthreads();
 
@@ -453,7 +453,7 @@ __global__ void kernelRenderPixelBlock(){
         if (last_lane_intersect || 
             (thread_id < SCAN_BLOCK_DIM - 1 && circle_intersects_block[thread_id] != circle_intersects_block[thread_id + 1])) {
             // this is a relevant circle
-            int circle_i = circle_intersects_block[thread_id];
+            uint circle_i = circle_intersects_block[thread_id];
             // keep track of # of relevant circle
             atomicAdd(&relevant_circle_count, 1);
             relevant_circle_indices[circle_i] = circle_index;
@@ -462,9 +462,9 @@ __global__ void kernelRenderPixelBlock(){
         }
         __syncthreads();
 
-        // Step 4: Shade the pixel with circles in relevant_circle_indices
-        for (int circle_i = 0; circle_i < relevant_circle_count; circle_i ++) {
-            shadePixel(relevant_circle_indices[circle_i], pixelCenterNorm, 
+        // Step 4: Shade the pixel with circles in relevant_circle_indices sequentially
+        for (uint circle_i = 0; circle_i < relevant_circle_count; circle_i ++) {
+            shadePixel(relevant_circle_indices[circle_i], pixel_center_norm, 
                         circle_intersects_p[circle_i], &imgPtrLocal, circle_intersects_radius[circle_i]);
         }
         __syncthreads();
