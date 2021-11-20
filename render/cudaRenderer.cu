@@ -453,7 +453,7 @@ __global__ void kernelRenderPixelBlock(){
         if (last_lane_intersect || 
             (thread_id < SCAN_BLOCK_DIM - 1 && circle_intersects_block[thread_id] != circle_intersects_block[thread_id + 1])) {
             // this is a relevant circle
-            uint circle_i = circle_intersects_block[thread_id];
+            int circle_i = circle_intersects_block[thread_id];
             // keep track of # of relevant circle
             atomicAdd(&relevant_circle_count, 1);
             relevant_circle_indices[circle_i] = circle_index;
@@ -463,7 +463,7 @@ __global__ void kernelRenderPixelBlock(){
         __syncthreads();
 
         // Step 4: Shade the pixel with circles in relevant_circle_indices sequentially
-        for (uint circle_i = 0; circle_i < relevant_circle_count; circle_i ++) {
+        for (int circle_i = 0; circle_i < relevant_circle_count; circle_i ++) {
             shadePixel(relevant_circle_indices[circle_i], pixel_center_norm, 
                         circle_intersects_p[circle_i], &imgPtrLocal, circle_intersects_radius[circle_i]);
         }
