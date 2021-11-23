@@ -320,7 +320,7 @@ __global__ void kernelAdvanceSnowflake() {
 //
 // given a pixel and a circle, determines the contribution to the
 // pixel from the circle.  Update of the image is done in this
-// function.  Called by kernelRenderCircles()
+// function.  Called by kernelRenderCircles() and kernelRenderPixelBlock()
 __device__ __inline__ void
 shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr, float rad) {
 
@@ -343,8 +343,8 @@ shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr, floa
     // will evaluate the same for all threads, there is overhead in
     // setting up the lane masks etc to implement the conditional.  It
     // would be wise to perform this logic outside of the loop next in
-    // kernelRenderCircles.  (If feeling good about yourself, you
-    // could use some specialized template magic).
+    // kernelRenderCircles and kernelRenderPixelBlock.  (If feeling good 
+    // about yourself, you could use some specialized template magic).
     if (cuConstRendererParams.sceneName == SNOWFLAKES || cuConstRendererParams.sceneName == SNOWFLAKES_SINGLE_FRAME) {
 
         const float kCircleMaxAlpha = .5f;
